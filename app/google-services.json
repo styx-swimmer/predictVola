@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "70539659077",
+    "project_id": "predictvola-507106",
+    "storage_bucket": "predictvola-507106.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:70539659077:android:e3f6c82fd7679c80b1602c",
+        "android_client_info": {
+          "package_name": "com.volatility.predict"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB-tB_FAGexEDKGjpEELMgvCev1DUvXVAU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

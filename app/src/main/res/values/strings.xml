@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PredictVola</string>
+    <string name="title_predicted_volatility">predicted 5 day volatility</string>
+    <string name="website_url">https://digitaldataanalysis.web.app/projects</string>
+    <string name="website_link_text">Methodology &amp; Disclosures</string>
+</resources>
