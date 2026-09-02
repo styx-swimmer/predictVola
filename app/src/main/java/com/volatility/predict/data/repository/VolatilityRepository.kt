@@ -3,7 +3,10 @@ package com.volatility.predict.data.repository
 import android.util.Log
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
+import com.volatility.predict.data.model.HorizonMove
 import com.volatility.predict.data.model.StockItem
+import com.volatility.predict.data.model.StockStats
+import com.volatility.predict.data.model.WeekdayStat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -14,9 +17,8 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Repository providing volatility forecast data.
+ * Repository providing volatility forecast and 365-day quantitative return statistics.
  * Reads single document `market_data/latest_forecast` from Firestore.
- * Automatically falls back to offline mock dataset if Firebase credentials are not yet configured.
  */
 class VolatilityRepository(
     private val firestoreProvider: () -> FirebaseFirestore? = {
@@ -55,6 +57,7 @@ class VolatilityRepository(
                             val predicted = (data["predictedVolatility"] as? Number)?.toDouble() ?: 0.0
                             val name = (data["name"] as? String) ?: getFallbackStockName(sym)
                             val currency = (data["currency"] as? String) ?: "USD"
+                            val stats = parseStats(data["stats"] as? Map<*, *>, sym)
 
                             parsedStocks.add(
                                 StockItem(
@@ -63,11 +66,11 @@ class VolatilityRepository(
                                     currentPrice = price,
                                     currency = currency,
                                     latestImpliedVolatility = implied,
-                                    predictedVolatility = predicted
+                                    predictedVolatility = predicted,
+                                    stats = stats
                                 )
                             )
                         } else {
-                            // If symbol wasn't in backend payload, provide realistic fallback item
                             parsedStocks.add(getFallbackItemForSymbol(sym))
                         }
                     }
@@ -101,6 +104,75 @@ class VolatilityRepository(
         )
     }.flowOn(Dispatchers.IO)
 
+    private fun parseStats(raw: Map<*, *>?, symbol: String): StockStats {
+        if (raw == null) {
+            return getFallbackStatsForSymbol(symbol)
+        }
+        try {
+            val daysAnalyzed = (raw["daysAnalyzed"] as? Number)?.toInt() ?: 252
+            val dailyMedianReturn = (raw["dailyMedianReturn"] as? Number)?.toDouble() ?: 0.0
+            val medianGain = (raw["medianGain"] as? Number)?.toDouble() ?: 0.0
+            val medianLoss = (raw["medianLoss"] as? Number)?.toDouble() ?: 0.0
+            val greenDayProbability = (raw["greenDayProbability"] as? Number)?.toDouble() ?: 50.0
+            val consecGainProb = (raw["consecutive2DayGainProbability"] as? Number)?.toDouble() ?: 25.0
+            val consecLossProb = (raw["consecutive2DayLossProbability"] as? Number)?.toDouble() ?: 25.0
+
+            val rawHorizons = raw["horizonMoves"] as? Map<*, *>
+            val d5Raw = rawHorizons?.get("d5") as? Map<*, *>
+            val d30Raw = rawHorizons?.get("d30") as? Map<*, *>
+            val d90Raw = rawHorizons?.get("d90") as? Map<*, *>
+
+            val h5 = HorizonMove(
+                horizon = (d5Raw?.get("horizon") as? String) ?: "5 Days",
+                maxGain = (d5Raw?.get("maxGain") as? Number)?.toDouble() ?: 0.0,
+                maxLoss = (d5Raw?.get("maxLoss") as? Number)?.toDouble() ?: 0.0
+            )
+            val h30 = HorizonMove(
+                horizon = (d30Raw?.get("horizon") as? String) ?: "30 Days",
+                maxGain = (d30Raw?.get("maxGain") as? Number)?.toDouble() ?: 0.0,
+                maxLoss = (d30Raw?.get("maxLoss") as? Number)?.toDouble() ?: 0.0
+            )
+            val h90 = HorizonMove(
+                horizon = (d90Raw?.get("horizon") as? String) ?: "90 Days",
+                maxGain = (d90Raw?.get("maxGain") as? Number)?.toDouble() ?: 0.0,
+                maxLoss = (d90Raw?.get("maxLoss") as? Number)?.toDouble() ?: 0.0
+            )
+
+            val rawWeekdays = raw["weekdayStats"] as? List<*>
+            val weekdays = mutableListOf<WeekdayStat>()
+            rawWeekdays?.forEach { item ->
+                val wMap = item as? Map<*, *>
+                if (wMap != null) {
+                    weekdays.add(
+                        WeekdayStat(
+                            day = (wMap["day"] as? String) ?: "",
+                            dayName = (wMap["dayName"] as? String) ?: "",
+                            avgReturn = (wMap["avgReturn"] as? Number)?.toDouble() ?: 0.0,
+                            greenProb = (wMap["greenProb"] as? Number)?.toDouble() ?: 50.0
+                        )
+                    )
+                }
+            }
+
+            return StockStats(
+                daysAnalyzed = daysAnalyzed,
+                dailyMedianReturn = dailyMedianReturn,
+                medianGain = medianGain,
+                medianLoss = medianLoss,
+                greenDayProbability = greenDayProbability,
+                consecutive2DayGainProbability = consecGainProb,
+                consecutive2DayLossProbability = consecLossProb,
+                horizon5d = h5,
+                horizon30d = h30,
+                horizon90d = h90,
+                weekdayStats = if (weekdays.isNotEmpty()) weekdays else getDefaultWeekdays()
+            )
+        } catch (e: Exception) {
+            Log.w("VolatilityRepo", "Error parsing stats for $symbol: ${e.message}")
+            return getFallbackStatsForSymbol(symbol)
+        }
+    }
+
     private fun formatTimestamp(value: Any?): String {
         return when (value) {
             is com.google.firebase.Timestamp -> {
@@ -125,88 +197,64 @@ class VolatilityRepository(
         else -> symbol
     }
 
+    private fun getDefaultWeekdays(): List<WeekdayStat> = listOf(
+        WeekdayStat("Mon", "Monday", 0.35, 55.0),
+        WeekdayStat("Tue", "Tuesday", 0.15, 52.0),
+        WeekdayStat("Wed", "Wednesday", 0.45, 58.0),
+        WeekdayStat("Thu", "Thursday", -0.10, 48.0),
+        WeekdayStat("Fri", "Friday", 0.05, 52.0)
+    )
+
+    private fun getFallbackStatsForSymbol(symbol: String): StockStats = when (symbol) {
+        "TSLA" -> StockStats(
+            daysAnalyzed = 252, dailyMedianReturn = 0.22, medianGain = 2.65, medianLoss = -2.35,
+            greenDayProbability = 52.4, consecutive2DayGainProbability = 28.6, consecutive2DayLossProbability = 23.4,
+            horizon5d = HorizonMove("5 Days", 19.8, -15.4),
+            horizon30d = HorizonMove("30 Days", 42.1, -28.6),
+            horizon90d = HorizonMove("90 Days", 76.5, -41.2),
+            weekdayStats = getDefaultWeekdays()
+        )
+        "NVDA" -> StockStats(
+            daysAnalyzed = 252, dailyMedianReturn = 0.35, medianGain = 2.85, medianLoss = -2.40,
+            greenDayProbability = 55.6, consecutive2DayGainProbability = 32.4, consecutive2DayLossProbability = 20.8,
+            horizon5d = HorizonMove("5 Days", 21.4, -16.8),
+            horizon30d = HorizonMove("30 Days", 48.6, -24.2),
+            horizon90d = HorizonMove("90 Days", 85.0, -32.5),
+            weekdayStats = getDefaultWeekdays()
+        )
+        else -> StockStats(
+            daysAnalyzed = 252, dailyMedianReturn = 0.18, medianGain = 1.65, medianLoss = -1.45,
+            greenDayProbability = 53.5, consecutive2DayGainProbability = 29.5, consecutive2DayLossProbability = 22.0,
+            horizon5d = HorizonMove("5 Days", 12.5, -9.5),
+            horizon30d = HorizonMove("30 Days", 26.0, -16.5),
+            horizon90d = HorizonMove("90 Days", 45.0, -22.0),
+            weekdayStats = getDefaultWeekdays()
+        )
+    }
+
     private fun getFallbackItemForSymbol(symbol: String): StockItem {
         return getMockForecastStocks().find { it.symbol == symbol } ?: StockItem(
             symbol = symbol,
             name = getFallbackStockName(symbol),
             currentPrice = 100.0,
             latestImpliedVolatility = 0.25,
-            predictedVolatility = 0.28
+            predictedVolatility = 0.28,
+            stats = getFallbackStatsForSymbol(symbol)
         )
     }
 
     fun getMockForecastStocks(): List<StockItem> {
         return listOf(
-            StockItem(
-                symbol = "TSLA",
-                name = "Tesla, Inc.",
-                currentPrice = 214.20,
-                latestImpliedVolatility = 0.521, // 52.1%
-                predictedVolatility = 0.584      // 58.4% (Implied < Predicted -> Yellowish)
-            ),
-            StockItem(
-                symbol = "MSFT",
-                name = "Microsoft Corp.",
-                currentPrice = 418.50,
-                latestImpliedVolatility = 0.245, // 24.5%
-                predictedVolatility = 0.218      // 21.8% (Implied >= Predicted -> Greenish)
-            ),
-            StockItem(
-                symbol = "NVDA",
-                name = "NVIDIA Corp.",
-                currentPrice = 126.80,
-                latestImpliedVolatility = 0.442, // 44.2%
-                predictedVolatility = 0.490      // 49.0% (Implied < Predicted -> Yellowish)
-            ),
-            StockItem(
-                symbol = "AAPL",
-                name = "Apple Inc.",
-                currentPrice = 227.30,
-                latestImpliedVolatility = 0.218, // 21.8%
-                predictedVolatility = 0.195      // 19.5% (Implied >= Predicted -> Greenish)
-            ),
-            StockItem(
-                symbol = "AMZN",
-                name = "Amazon.com, Inc.",
-                currentPrice = 178.60,
-                latestImpliedVolatility = 0.312, // 31.2%
-                predictedVolatility = 0.355      // 35.5% (Implied < Predicted -> Yellowish)
-            ),
-            StockItem(
-                symbol = "GOOG",
-                name = "Alphabet Inc.",
-                currentPrice = 164.90,
-                latestImpliedVolatility = 0.280, // 28.0%
-                predictedVolatility = 0.260      // 26.0% (Implied >= Predicted -> Greenish)
-            ),
-            StockItem(
-                symbol = "META",
-                name = "Meta Platforms, Inc.",
-                currentPrice = 510.40,
-                latestImpliedVolatility = 0.368, // 36.8%
-                predictedVolatility = 0.412      // 41.2% (Implied < Predicted -> Yellowish)
-            ),
-            StockItem(
-                symbol = "AVGO",
-                name = "Broadcom Inc.",
-                currentPrice = 156.70,
-                latestImpliedVolatility = 0.395, // 39.5%
-                predictedVolatility = 0.365      // 36.5% (Implied >= Predicted -> Greenish)
-            ),
-            StockItem(
-                symbol = "AMD",
-                name = "Advanced Micro Devices",
-                currentPrice = 148.90,
-                latestImpliedVolatility = 0.410, // 41.0%
-                predictedVolatility = 0.465      // 46.5% (Implied < Predicted -> Yellowish)
-            ),
-            StockItem(
-                symbol = "LLY",
-                name = "Eli Lilly & Co.",
-                currentPrice = 945.10,
-                latestImpliedVolatility = 0.292, // 29.2%
-                predictedVolatility = 0.270      // 27.0% (Implied >= Predicted -> Greenish)
-            )
+            StockItem("TSLA", "Tesla, Inc.", 214.20, "USD", 0.521, 0.584, stats = getFallbackStatsForSymbol("TSLA")),
+            StockItem("MSFT", "Microsoft Corp.", 418.50, "USD", 0.245, 0.218, stats = getFallbackStatsForSymbol("MSFT")),
+            StockItem("NVDA", "NVIDIA Corp.", 126.80, "USD", 0.442, 0.490, stats = getFallbackStatsForSymbol("NVDA")),
+            StockItem("AAPL", "Apple Inc.", 227.30, "USD", 0.218, 0.195, stats = getFallbackStatsForSymbol("AAPL")),
+            StockItem("AMZN", "Amazon.com, Inc.", 178.60, "USD", 0.312, 0.355, stats = getFallbackStatsForSymbol("AMZN")),
+            StockItem("GOOG", "Alphabet Inc.", 164.90, "USD", 0.280, 0.260, stats = getFallbackStatsForSymbol("GOOG")),
+            StockItem("META", "Meta Platforms, Inc.", 510.40, "USD", 0.368, 0.412, stats = getFallbackStatsForSymbol("META")),
+            StockItem("AVGO", "Broadcom Inc.", 156.70, "USD", 0.395, 0.365, stats = getFallbackStatsForSymbol("AVGO")),
+            StockItem("AMD", "Advanced Micro Devices", 148.90, "USD", 0.410, 0.465, stats = getFallbackStatsForSymbol("AMD")),
+            StockItem("LLY", "Eli Lilly & Co.", 945.10, "USD", 0.292, 0.270, stats = getFallbackStatsForSymbol("LLY"))
         )
     }
 }

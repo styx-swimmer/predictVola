@@ -1,11 +1,11 @@
 package com.volatility.predict.data.model
 
 import com.google.firebase.firestore.PropertyName
-import java.text.NumberFormat
 import java.util.Locale
 
 /**
- * Domain model representing a stock's latest pricing and volatility forecast.
+ * Domain model representing a stock's latest pricing, volatility forecast,
+ * and 365-day quantitative return statistics.
  */
 data class StockItem(
     val symbol: String = "",
@@ -14,12 +14,9 @@ data class StockItem(
     val currency: String = "USD",
     val latestImpliedVolatility: Double = 0.0,
     val predictedVolatility: Double = 0.0,
-    val updatedAt: String = ""
+    val updatedAt: String = "",
+    val stats: StockStats? = null
 ) {
-    /**
-     * Requirement: If latest implied volatility is smaller than predicted value,
-     * the tile should be yellow(ish), otherwise green.
-     */
     val isImpliedLowerThanPredicted: Boolean
         get() = latestImpliedVolatility < predictedVolatility
 
@@ -37,6 +34,66 @@ data class StockItem(
 
     val formattedSpread: String
         get() = String.format(Locale.US, "%+.1f%%", volSpreadPercent)
+}
+
+/**
+ * 365-Day quantitative return and multi-horizon movement statistics.
+ */
+data class StockStats(
+    val daysAnalyzed: Int = 252,
+    val dailyMedianReturn: Double = 0.0,
+    val medianGain: Double = 0.0,
+    val medianLoss: Double = 0.0,
+    val greenDayProbability: Double = 50.0,
+    val consecutive2DayGainProbability: Double = 25.0,
+    val consecutive2DayLossProbability: Double = 25.0,
+    val horizon5d: HorizonMove = HorizonMove("5 Days", 0.0, 0.0),
+    val horizon30d: HorizonMove = HorizonMove("30 Days", 0.0, 0.0),
+    val horizon90d: HorizonMove = HorizonMove("90 Days", 0.0, 0.0),
+    val weekdayStats: List<WeekdayStat> = emptyList()
+) {
+    val formattedDailyMedian: String
+        get() = String.format(Locale.US, "%+.2f%%", dailyMedianReturn)
+
+    val formattedMedianGain: String
+        get() = String.format(Locale.US, "+%.2f%%", medianGain)
+
+    val formattedMedianLoss: String
+        get() = String.format(Locale.US, "%.2f%%", medianLoss)
+
+    val formattedGreenProb: String
+        get() = String.format(Locale.US, "%.1f%%", greenDayProbability)
+
+    val formattedConsecGainProb: String
+        get() = String.format(Locale.US, "%.1f%%", consecutive2DayGainProbability)
+
+    val formattedConsecLossProb: String
+        get() = String.format(Locale.US, "%.1f%%", consecutive2DayLossProbability)
+}
+
+data class HorizonMove(
+    val horizon: String = "",
+    val maxGain: Double = 0.0,
+    val maxLoss: Double = 0.0
+) {
+    val formattedMaxGain: String
+        get() = String.format(Locale.US, "+%.1f%%", maxGain)
+
+    val formattedMaxLoss: String
+        get() = String.format(Locale.US, "%.1f%%", maxLoss)
+}
+
+data class WeekdayStat(
+    val day: String = "",
+    val dayName: String = "",
+    val avgReturn: Double = 0.0,
+    val greenProb: Double = 50.0
+) {
+    val formattedAvgReturn: String
+        get() = String.format(Locale.US, "%+.2f%%", avgReturn)
+
+    val formattedGreenProb: String
+        get() = String.format(Locale.US, "%.1f%%", greenProb)
 }
 
 /**
@@ -75,5 +132,9 @@ data class StockItemDto(
 
     @get:PropertyName("predictedVolatility")
     @set:PropertyName("predictedVolatility")
-    var predictedVolatility: Double = 0.0
+    var predictedVolatility: Double = 0.0,
+
+    @get:PropertyName("stats")
+    @set:PropertyName("stats")
+    var stats: Map<String, Any>? = null
 )

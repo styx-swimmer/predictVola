@@ -14,7 +14,16 @@ import argparse
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
-import functions_framework
+try:
+    import functions_framework
+    _HAS_FF = True
+except ImportError:
+    _HAS_FF = False
+
+    def http_dummy_decorator(func):
+        return func
+    functions_framework = type('obj', (object,), {'http': http_dummy_decorator})
+
 from forecast_engine import compute_all_symbols
 
 # Google Cloud & Firebase Admin
