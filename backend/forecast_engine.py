@@ -163,11 +163,22 @@ def process_single_stock(symbol: str, company_name: str, horizon_days: int = 5) 
     """
     try:
         logging.info(f"[{symbol}] Fetching historical data and options chain...")
-        ticker = yf.Ticker(symbol)
+        
+        # Add a custom session with a User-Agent to prevent yfinance from being blocked
+        import requests
+        session = requests.Session()
+        session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
+        
+        ticker = yf.Ticker(symbol, session=session)
         
         # 1. Fetch 2 years of daily historical data for robust GARCH fitting + 365d stats
-        hist = ticker.history(period="2y")
-        if hist.empty or len(hist) < 100:
+        try:
+            hist = ticker.history(period="2y")
+        except Exception as yf_err:
+            logging.error(f"[{symbol}] yfinance failed to fetch history: {yf_err}")
+            return None
+            
+        if hist is None or hist.empty or len(hist) < 100:
             logging.error(f"[{symbol}] Insufficient historical price data.")
             return None
         
