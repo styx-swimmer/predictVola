@@ -1,0 +1,7 @@
+Computing real statistics for 10 symbols (this may take a minute)...
+=== [DRY RUN] Generated Firestore Document Payload with Real 365-Day Stats ===
+{
+  "updatedAt": "2026-09-04T14:16:25.008707+00:00",
+  "symbols": {}
+}
+Target Document: market_data/latest_forecast
